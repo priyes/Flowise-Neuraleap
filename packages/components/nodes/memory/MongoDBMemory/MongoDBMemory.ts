@@ -14,21 +14,59 @@ import { FlowiseMemory, ICommonObject, IMessage, INode, INodeData, INodeParams, 
 let mongoClientSingleton: MongoClient
 let mongoUrl: string
 
-const getMongoClient = async (newMongoUrl: string) => {
-    if (!mongoClientSingleton) {
-        // if client does not exist
-        mongoClientSingleton = new MongoClient(newMongoUrl)
-        mongoUrl = newMongoUrl
-        return mongoClientSingleton
-    } else if (mongoClientSingleton && newMongoUrl !== mongoUrl) {
-        // if client exists but url changed
-        mongoClientSingleton.close()
-        mongoClientSingleton = new MongoClient(newMongoUrl)
-        mongoUrl = newMongoUrl
-        return mongoClientSingleton
+// Configurable parameters for retry and jitter
+const MAX_RETRIES = 2;
+const JITTER_MIN = 2000; // 2 seconds
+const JITTER_MAX = 5000; // 5 seconds
+
+// Helper function to add a jittered delay
+const delayWithJitter = (min: number, max: number) => {
+  const jitter = Math.floor(Math.random() * (max - min + 1) + min);
+  return new Promise(resolve => setTimeout(resolve, jitter));
+};
+
+// Function to establish connection with retry logic
+const connectWithRetry = async (client: MongoClient, retries: number = MAX_RETRIES): Promise<MongoClient> => {
+  try {
+    await client.connect();
+    return client;
+  } catch (error) {
+    
+    if (retries === 0) {
+      throw new Error('Max retries reached, failed to connect to MongoDB');
     }
-    return mongoClientSingleton
-}
+
+    // Retry with a jitter delay
+    await delayWithJitter(JITTER_MIN, JITTER_MAX);
+    return connectWithRetry(client, retries - 1);
+  }
+};
+
+// Function to check if the client is connected
+const isClientConnected = (client: MongoClient): boolean => {
+  return client?.topology?.isConnected() ?? false;
+};
+
+
+const getMongoClient = async (newMongoUrl: string): Promise<MongoClient> => {
+  // If there's no existing client, or the URL has changed, create a new client
+  if (!mongoClientSingleton || mongoUrl !== newMongoUrl) {
+    if (mongoClientSingleton) {
+      await mongoClientSingleton.close();
+    }
+    
+    mongoClientSingleton = new MongoClient(newMongoUrl);
+    mongoUrl = newMongoUrl;
+    return connectWithRetry(mongoClientSingleton);
+  }
+
+  // If the client exists but isn't connected, reconnect
+  if (!isClientConnected(mongoClientSingleton)) {
+    return connectWithRetry(mongoClientSingleton);
+  }
+
+  return mongoClientSingleton;
+};
 class MongoDB_Memory implements INode {
     label: string
     name: string
