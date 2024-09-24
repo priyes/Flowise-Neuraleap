@@ -43,9 +43,15 @@ const connectWithRetry = async (client: MongoClient, retries: number = MAX_RETRI
 };
 
 // Function to check if the client is connected
-const isClientConnected = (client: MongoClient): boolean => {
-  return client?.topology?.isConnected() ?? false;
-};
+const isClientConnected = async (client: MongoClient): Promise<boolean> => {
+    try {
+      // Perform a simple ping to check if the client is still connected
+      await client.db().admin().ping();
+      return true;
+    } catch (error) {
+      return false;
+    }
+  };
 
 
 const getMongoClient = async (newMongoUrl: string): Promise<MongoClient> => {
@@ -61,7 +67,7 @@ const getMongoClient = async (newMongoUrl: string): Promise<MongoClient> => {
   }
 
   // If the client exists but isn't connected, reconnect
-  if (!isClientConnected(mongoClientSingleton)) {
+  if (!await isClientConnected(mongoClientSingleton)) {
     return connectWithRetry(mongoClientSingleton);
   }
 
